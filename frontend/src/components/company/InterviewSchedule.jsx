@@ -1,6 +1,6 @@
 import React from "react";
 
-export default function InterviewSchedule({ displayApplicants, viewResume }) {
+export default function InterviewSchedule({ companyApplications, viewResume }) {
   const getInterviewApps = () => {
     const localApps = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -10,7 +10,7 @@ export default function InterviewSchedule({ displayApplicants, viewResume }) {
       }
     }
 
-    const allCompanyApps = [...displayApplicants];
+    const allCompanyApps = [...(companyApplications || [])];
     localApps.forEach((la) => {
       if (
         !allCompanyApps.some(

@@ -15,6 +15,7 @@ export default function CompanyPortal({
   selectAtsJob,
   handleDeleteJob,
   displayApplicants,
+  companyApplications,
   handleStatusChange,
   viewResume,
   candidateDisplayList,
@@ -67,7 +68,7 @@ export default function CompanyPortal({
 
       {activeTab === "schedule" && (
         <InterviewSchedule
-          displayApplicants={displayApplicants}
+          companyApplications={companyApplications}
           viewResume={viewResume}
         />
       )}

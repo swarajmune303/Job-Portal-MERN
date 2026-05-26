@@ -113,7 +113,7 @@ export default function App() {
         skills: currentUser.skills || "",
       });
     }
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // Periodic metrics auto-refreshes for Recruiter Dashboard
   useEffect(() => {
@@ -221,6 +221,13 @@ export default function App() {
         const updated = { ...user, ...backendUser };
         setCurrentUser(updated);
         localStorage.setItem("user", JSON.stringify(updated));
+
+        // Update localUsers cache to stay in sync with synced backend data
+        const localUsers = JSON.parse(localStorage.getItem("localUsers")) || [];
+        const updatedList = localUsers.map((u) =>
+          u.id === backendUser.id ? { ...u, name: backendUser.name, email: backendUser.email, skills: backendUser.skills } : u
+        );
+        localStorage.setItem("localUsers", JSON.stringify(updatedList));
       } else {
         // Try re-registering if user wiped from database
         console.warn(
@@ -824,6 +831,52 @@ export default function App() {
   };
 
   const handleStatusChange = async (appId, newStatus) => {
+    // Find the application object to retrieve user details & job title
+    let updatedApp = companyApplications.find((a) => a.id === appId) || 
+                     atsApplicants.find((a) => a.id === appId);
+
+    // If not found in memory (could happen if it's local only), check localStorage
+    if (!updatedApp) {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith("localApps_")) {
+          const list = JSON.parse(localStorage.getItem(key)) || [];
+          const match = list.find((la) => la.id === appId);
+          if (match) {
+            updatedApp = match;
+            break;
+          }
+        }
+      }
+    }
+
+    const userId = updatedApp?.userId || updatedApp?.user_id;
+    const jobTitle = updatedApp?.job?.title || "Job Post";
+    
+    // Prepare premium notification text and type based on newStatus
+    let notifText = `Your application status for "${jobTitle}" has been updated to "${newStatus}".`;
+    let notifType = "INFO";
+
+    if (newStatus === "INTERVIEW") {
+      notifText = `Congratulations! You have been scheduled for an interview for the "${jobTitle}" position.`;
+      notifType = "INFO";
+    } else if (newStatus === "REJECTED") {
+      notifText = `Thank you for your interest. Unfortunately, your application for "${jobTitle}" was not selected to proceed.`;
+      notifType = "WARNING";
+    } else if (newStatus === "OFFER") {
+      notifText = `Exciting news! You have received a job offer for the "${jobTitle}" position!`;
+      notifType = "SUCCESS";
+    } else if (newStatus === "SCREENING") {
+      notifText = `Your application for "${jobTitle}" is currently in the screening stage.`;
+      notifType = "INFO";
+    } else if (newStatus === "ASSESSMENT") {
+      notifText = `Your application for "${jobTitle}" has proceeded to the assessment stage.`;
+      notifType = "INFO";
+    } else if (newStatus === "APPLIED") {
+      notifText = `Your application for "${jobTitle}" is currently pending review.`;
+      notifType = "INFO";
+    }
+
     try {
       const res = await fetch(`${API_BASE}/applications/${appId}/status`, {
         method: "PUT",
@@ -834,13 +887,8 @@ export default function App() {
         if (atsJob) selectAtsJob(atsJob);
         loadCompanyJobs(currentUser.id);
 
-        const updatedApp = atsApplicants.find((a) => a.id === appId);
-        if (updatedApp) {
-          addNotification(
-            updatedApp.userId || updatedApp.user_id || currentUser.id,
-            `Your application status has been updated to "${newStatus}" for "${atsJob?.title}"!`,
-            "INFO",
-          );
+        if (userId) {
+          addNotification(userId, notifText, notifType);
         }
       } else {
         throw new Error();
@@ -861,6 +909,12 @@ export default function App() {
       }
       if (atsJob) selectAtsJob(atsJob);
       loadCompanyJobs(currentUser.id);
+      
+      // Also generate notification for the local offline fallback!
+      if (userId) {
+        addNotification(userId, `${notifText} (offline fallback)`, notifType);
+      }
+      
       alert("Application status updated locally (offline fallback)!");
     }
   };
@@ -964,6 +1018,18 @@ export default function App() {
         alert("Profile updated successfully!");
         setCurrentUser(result);
         localStorage.setItem("user", JSON.stringify(result));
+        setProfileForm({
+          name: result.name || "",
+          email: result.email || "",
+          skills: result.skills || "",
+        });
+
+        // Update localUsers cache so that the offline login registry stays in sync!
+        const localUsers = JSON.parse(localStorage.getItem("localUsers")) || [];
+        const updatedList = localUsers.map((u) =>
+          u.id === result.id ? { ...u, name: result.name, email: result.email, skills: result.skills } : u
+        );
+        localStorage.setItem("localUsers", JSON.stringify(updatedList));
       } else {
         throw new Error();
       }
@@ -1005,10 +1071,17 @@ export default function App() {
           setCurrentUser(user);
           localStorage.setItem("user", JSON.stringify(user));
         } else {
-          throw new Error();
+          // If the server explicitly rejected the login (e.g., 401 Unauthorized), do NOT fall back to local cache!
+          if (res.status === 401 || res.status === 400) {
+            const errText = await res.text();
+            alert(errText || "Invalid credentials. Please check your email and password.");
+            return;
+          }
+          throw new Error("Server Error");
         }
-      } catch {
-        // Local Fallback
+      } catch (err) {
+        // Local Fallback (only triggered on network connection failures or generic server error)
+        console.warn("Server unreachable, attempting local fallback login:", err);
         const local = JSON.parse(localStorage.getItem("localUsers")) || [];
         const match = local.find(
           (u) => u.email === authForm.email && u.password === authForm.password,
@@ -1291,6 +1364,7 @@ export default function App() {
             selectAtsJob={selectAtsJob}
             handleDeleteJob={handleDeleteJob}
             displayApplicants={displayApplicants}
+            companyApplications={companyApplications}
             handleStatusChange={handleStatusChange}
             viewResume={viewResume}
             candidateDisplayList={candidateDisplayList}
